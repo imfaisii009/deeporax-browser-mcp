@@ -224,6 +224,47 @@ function saveSessions(): void {
     .catch(() => {});
 }
 
+/**
+ * Tabs the user has pressed Stop on. This lives in the background, not the
+ * content script, because the content script reloads on every navigation and
+ * would silently forget the user said stop. Only a Resume message clears an
+ * entry — never a navigation, a new session, or a tool call.
+ */
+const stoppedTabs = new Set<number>();
+
+const STOPPED_KEY = "stoppedTabs";
+
+/** Same restart hazard as loadSessions: a killed service worker must not
+ * un-stop a tab the user stopped before the restart. */
+async function loadStopped(): Promise<void> {
+  try {
+    const stored = await chrome.storage.session.get(STOPPED_KEY);
+    const saved = stored[STOPPED_KEY] as number[] | undefined;
+    if (!saved) return;
+    for (const id of saved) stoppedTabs.add(id);
+  } catch {
+    /* first run, or storage unavailable — start empty */
+  }
+}
+const stoppedReady: Promise<void> = loadStopped();
+
+/** Fire-and-forget: never make a response wait on this write. */
+function saveStopped(): void {
+  void chrome.storage.session
+    .set({ [STOPPED_KEY]: [...stoppedTabs] })
+    .catch(() => {});
+}
+
+/** Same wording dom-actions.ts uses, so the agent gets one consistent
+ * message regardless of which path (content script or CDP) refused it. */
+function assertNotStopped(tabId: number): void {
+  if (stoppedTabs.has(tabId)) {
+    throw new Error(
+      "Agent control was stopped by the user in this tab. They can press Resume on the on-page bar; do not retry until they do."
+    );
+  }
+}
+
 function sessionOf(sessionId: string): AgentSession {
   let s = sessions.get(sessionId);
   if (!s) {
@@ -246,6 +287,11 @@ function sessionOf(sessionId: string): AgentSession {
 function rememberTab(tabId: number, sessionId: string): number {
   const s = sessionOf(sessionId);
   s.currentTabId = tabId;
+  // Session bookkeeping only — this also runs for an explicit agent-supplied
+  // tabId (resolveTabId), so it must never claim cdp ownership. Naming an id
+  // is not handing it over; ownership is claimed only where a tab is actually
+  // created (createBackgroundTab) or re-attached under a swapped id
+  // (tabs.onReplaced). Do not move the claim back here.
   return tabId;
 }
 
@@ -619,6 +665,7 @@ async function safeDom(
  */
 async function handleMethod(req: BridgeRequest): Promise<unknown> {
   await sessionsReady;
+  await stoppedReady;
   try {
     return await handleMethodInner(req);
   } finally {
@@ -739,6 +786,7 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
         return navResult;
       }
       const id = await resolveTabId(tabIdParam, sid);
+      assertNotStopped(id);
       const pageBefore = await readPage(id);
       // Arm before navigation so the first image wave is already intercepted.
       if (blockHeavyAssets) await applyAssetBlocking(id);
@@ -791,6 +839,7 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
     case "forward":
     case "reload": {
       const id = await resolveTabId(tabIdParam, sid);
+      assertNotStopped(id);
       const pageBefore = await readPage(id);
       if (method === "back") await chrome.tabs.goBack(id);
       else if (method === "forward") await chrome.tabs.goForward(id);
@@ -864,7 +913,17 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
       }
       if (action === "close") {
         const id = await resolveTabId(tabIdParam, sid);
+        // resolveTabId accepts any live tabId the agent names, not just ones
+        // it owns - closing is destructive, so it must stay scoped to
+        // cdp.isAgentTab like dialog_policy, or an agent could close a tab
+        // it was merely handed the id of.
+        if (!cdp.isAgentTab(id)) {
+          throw new Error(
+            `Tab ${id} belongs to the user; this session can only close tabs it opened (browser_tabs action=new).`
+          );
+        }
         await chrome.tabs.remove(id);
+        cdp.releaseAgentTab(id);
         if (sess.currentTabId === id) sess.currentTabId = null;
         return { ok: true, closed: id, sessionId: sid };
       }
@@ -961,7 +1020,9 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
     }
 
     // Pointer and keyboard actions go through the debugger so the page sees
-    // isTrusted events. Component libraries drop synthetic ones.
+    // isTrusted events. Component libraries drop synthetic ones. This bypasses
+    // the content script entirely, so a stopped tab is refused below instead
+    // of relying on dom-actions.ts's own stop check.
     case "click":
     case "click_xy":
     case "type":
@@ -972,6 +1033,7 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
     case "select_option":
     case "fill_form": {
       const id = await resolveTabId(tabIdParam, sid);
+      assertNotStopped(id);
       await assertScriptable(id);
       await injectMainHooks(id);
 
@@ -1029,6 +1091,7 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
     // so this has to run out of process through the debugger.
     case "evaluate": {
       const id = await resolveTabId(tabIdParam, sid);
+      assertNotStopped(id);
       await assertScriptable(id);
       const script = String(params.script ?? "");
       if (!script.trim()) throw new Error("script is required");
@@ -1066,6 +1129,17 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
     case "find_option":
     case "dialogs": {
       const id = await resolveTabId(tabIdParam, sid);
+      // resolveTabId accepts any live tabId the agent names, not just ones it
+      // owns - dialog answering must stay scoped to cdp.isAgentTab (the same
+      // boundary prime() enforces), or an agent could arm auto-answer on a
+      // tab it was merely handed the id of and silently swallow the user's
+      // own dialogs there.
+      if (method === "dialog_policy" && !cdp.isAgentTab(id)) {
+        throw new Error(
+          `Dialog control only applies to tabs this session opened. Tab ${id} belongs to the user; ` +
+            "open a tab for the session (or use browser_tabs action=new) if the agent needs to answer its dialogs."
+        );
+      }
       await assertScriptable(id);
       await injectMainHooks(id);
       if (method === "dialog_policy") {
@@ -1126,6 +1200,7 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
      */
     case "act_matches": {
       const id = await resolveTabId(tabIdParam, sid);
+      assertNotStopped(id);
       await assertScriptable(id);
       await injectMainHooks(id);
       // Fresh refs so matches stay valid for the bulk pass.
@@ -1350,6 +1425,15 @@ async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
       const tab = await getTab(tabIdParam, sid);
       if (!tab.id) throw new Error("Tab has no id");
       const id = tab.id;
+      // Naming a tab is not owning it - a device-metrics override visibly
+      // warps what the user is looking at, same boundary as dialog_policy
+      // and tabs close. Guards the clear (0,0) path too, for consistency.
+      if (!cdp.isAgentTab(id)) {
+        throw new Error(
+          `Tab ${id} belongs to the user; this session can only resize tabs it opened (browser_tabs action=new).`
+        );
+      }
+      assertNotStopped(id);
       await assertScriptable(id);
       const width = Number(params.width);
       const height = Number(params.height);
@@ -1654,6 +1738,18 @@ async function injectMainHooks(tabId: number): Promise<void> {
   }
 }
 
+// Page hooks answer dialogs natively unless a policy has been pushed (see
+// page-hooks.ts), so a tab the extension just claimed needs one right away
+// or an agent-driven confirm() would sit on a real dialog forever. Reuses
+// the same dialog_policy path the browser_handle_dialog tool uses to reach
+// the page; failing soft here just means the next inject-main-hooks or
+// explicit policy call covers it instead.
+async function pushDefaultDialogPolicy(tabId: number): Promise<void> {
+  await safeDom(tabId, "dialog_policy", { policy: { alert: "accept", confirm: true } }).catch(
+    () => {}
+  );
+}
+
 // Network capture goes through the same session bookkeeping as input, so the
 // two paths cannot fight over one tab's debugger.
 async function attachDebugger(tabId: number): Promise<void> {
@@ -1767,6 +1863,12 @@ async function createBackgroundTab(
     // Agents leave tabs open in the background for a while; don't let Chrome
     // discard them for memory and lose the page state mid-task.
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
+    // This is the only place the extension actually creates a tab, so it is
+    // a legitimate ownership claim: the extension made the tab, the agent
+    // owns it. Every session tab (openTabForSession, tabs action "new")
+    // routes through here — do not duplicate the claim in those callers.
+    cdp.setAgentTab(tab.id);
+    await pushDefaultDialogPolicy(tab.id);
   }
   return tab;
 }
@@ -1874,13 +1976,18 @@ chrome.debugger.onDetach.addListener((source) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   await sessionsReady;
+  await stoppedReady;
   networkByTab.delete(tabId);
   netEnabled.delete(tabId);
   fetchBlockedTabs.delete(tabId);
+  cdp.releaseAgentTab(tabId);
   for (const s of sessions.values()) {
     if (s.currentTabId === tabId) s.currentTabId = null;
   }
   saveSessions();
+  // The id is gone for good; keeping it would poison a recycled tab id with
+  // someone else's stop.
+  if (stoppedTabs.delete(tabId)) saveStopped();
 });
 
 // Prerendering and some discard/restore flows swap a tab's id without ever
@@ -1900,7 +2007,16 @@ chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
   // yet, so the next call re-attaches and re-arms rather than assuming.
   netEnabled.delete(removedTabId);
   fetchBlockedTabs.delete(removedTabId);
+  // Read ownership before forget() clears it below. This is a re-claim, not
+  // a new grant: only carry ownership forward when Chrome swapped the id
+  // under a tab the agent already owned — never hand a user tab to the
+  // agent just because it happened to get a new id.
+  const wasAgentTab = cdp.isAgentTab(removedTabId);
   cdp.forget(removedTabId);
+  if (wasAgentTab) {
+    cdp.setAgentTab(addedTabId);
+    await pushDefaultDialogPolicy(addedTabId);
+  }
   saveSessions();
 });
 
@@ -1908,6 +2024,10 @@ chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
 chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   if (!blockHeavyAssets) return;
   if (info.status !== "loading") return;
+  // rememberTab/placeInSessionGroup track any named tab, not just ones the
+  // session owns - re-arming blocking must stay scoped to cdp.isAgentTab or
+  // the user's own tab starts silently dropping images.
+  if (!cdp.isAgentTab(tabId)) return;
   await sessionsReady;
   let owned = false;
   for (const s of sessions.values()) {
@@ -2008,6 +2128,42 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     sendResponse({ ok: false });
     return false;
+  }
+  // The three Stop messages from the on-page bar. Background is the source
+  // of truth for stop state (see stoppedTabs above), so every one of these
+  // waits on stoppedReady before touching the set.
+  if (msg?.type === "deeporax-agent-stop") {
+    const tabId = _sender.tab?.id;
+    if (tabId != null) {
+      void stoppedReady.then(() => {
+        stoppedTabs.add(tabId);
+        saveStopped();
+        sendResponse({ ok: true });
+      });
+      return true;
+    }
+    sendResponse({ ok: false });
+    return false;
+  }
+  if (msg?.type === "deeporax-agent-resume") {
+    const tabId = _sender.tab?.id;
+    if (tabId != null) {
+      void stoppedReady.then(() => {
+        stoppedTabs.delete(tabId);
+        saveStopped();
+        sendResponse({ ok: true });
+      });
+      return true;
+    }
+    sendResponse({ ok: false });
+    return false;
+  }
+  if (msg?.type === "deeporax-agent-stop-state") {
+    const tabId = _sender.tab?.id;
+    void stoppedReady.then(() => {
+      sendResponse({ stopped: tabId != null && stoppedTabs.has(tabId) });
+    });
+    return true;
   }
   return false;
 });

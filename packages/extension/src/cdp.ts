@@ -19,6 +19,38 @@ const PROTOCOL_VERSION = "1.3";
 const attached = new Set<number>();
 /** Tabs where attaching failed, so we stop retrying every call. */
 const unavailable = new Map<number, { message: string; at: number }>();
+/** Tabs the agent owns (created or claimed for a session). prime() and the
+ * dialog listener only take over a tab's native UI when it is in this set -
+ * see prime() for why that boundary exists. */
+const agentTabs = new Set<number>();
+/** Tabs that currently carry a device-metrics override from setViewport. */
+const viewportOverridden = new Set<number>();
+
+/** Best-effort clear used wherever we drop a tab's bookkeeping; nothing else
+ * ever removes the override, and it would otherwise persist across
+ * navigations for the rest of the tab's life. */
+function clearViewportOverride(tabId: number): void {
+  if (!viewportOverridden.delete(tabId)) return;
+  chrome.debugger
+    .sendCommand({ tabId }, "Emulation.clearDeviceMetricsOverride")
+    .catch(() => {});
+}
+
+/** Background calls this for tabs it creates or claims for a session. */
+export function setAgentTab(tabId: number): void {
+  agentTabs.add(tabId);
+}
+
+/** Forget ownership of a tab; also clears any viewport override, since
+ * nothing else will once the agent stops treating this as its tab. */
+export function releaseAgentTab(tabId: number): void {
+  agentTabs.delete(tabId);
+  clearViewportOverride(tabId);
+}
+
+export function isAgentTab(tabId: number): boolean {
+  return agentTabs.has(tabId);
+}
 
 export type MouseButton = "left" | "right" | "middle";
 
@@ -91,6 +123,16 @@ const RETRY_ATTACH_AFTER_MS = 5_000;
  * emulation are nice to have, not required for input/evaluate to work, so a
  * failure here must never make attach() itself report false. */
 async function prime(tabId: number): Promise<void> {
+  // Scoped to tabs the agent owns. attach() is reachable for any live tab id
+  // - an explicit tabId, or any id from a sessionOnly:false tab list - which
+  // includes a tab the user is actively working in. Page.enable makes Chrome
+  // route beforeunload/confirm/prompt to the Page.javascriptDialogOpening
+  // listener below instead of showing its own UI, and nothing ever calls
+  // detach() to undo that, so priming a tab we don't own would permanently
+  // swallow the user's "Leave site?" prompt and risk silently losing unsaved
+  // work. Input, evaluate, and screenshot all work fine on an unprimed tab.
+  if (!agentTabs.has(tabId)) return;
+
   // Raw sendCommand, not send(): send() reattaches on "not attached", and
   // attach() calls prime(), so the two would recurse on a flapping session.
   await chrome.debugger.sendCommand({ tabId }, "Page.enable").catch(() => {});
@@ -187,6 +229,8 @@ export function forget(tabId: number): void {
   unavailable.delete(tabId);
   dialogPolicies.delete(tabId);
   dialogBuffers.delete(tabId);
+  agentTabs.delete(tabId);
+  clearViewportOverride(tabId);
 }
 
 /** A frozen renderer must not hang the caller forever. */
@@ -695,10 +739,12 @@ export async function setViewport(
     deviceScaleFactor: 0,
     mobile: false,
   });
+  viewportOverridden.add(tabId);
 }
 
 export async function clearViewport(tabId: number): Promise<void> {
   await send(tabId, "Emulation.clearDeviceMetricsOverride");
+  viewportOverridden.delete(tabId);
 }
 
 // --- Dialogs ------------------------------------------------------------------
@@ -751,6 +797,10 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (method !== "Page.javascriptDialogOpening") return;
   const tabId = source.tabId;
   if (tabId == null || !params) return;
+  // Page.enable is only ever sent for tabs in agentTabs (see prime()), so
+  // this should never fire for a tab we don't own - guard anyway, since
+  // answering here takes the dialog away from the user.
+  if (!agentTabs.has(tabId)) return;
 
   const p = params as {
     type: "alert" | "confirm" | "prompt" | "beforeunload";
@@ -805,6 +855,9 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId != null) {
     attached.delete(source.tabId);
+    // The override dies with the session; just drop the bookkeeping, since
+    // sending a command to an already-detached debugger would only fail.
+    viewportOverridden.delete(source.tabId);
   }
 });
 

@@ -47,6 +47,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Answering a page's dialogs automatically is now limited to tabs the session
+  opened. `browser_handle_dialog` used to reach a named tab's dialog policy
+  through a path that never checked ownership, so pointing the agent at one
+  of the user's own tabs could still arm dialog auto-answering there
+- The debugger no longer takes over dialogs or focus on a tab the agent does
+  not own. Previously, a tab the agent had merely screenshotted or read could
+  lose Chrome's native "Leave site? Changes you made may not be saved" prompt
+  for the rest of its life, with the extension silently answering it instead
+  — a data-loss risk on the user's own tabs. Chrome's own dialogs and focus
+  behavior are now left alone on non-agent tabs. The rule is tighter now too:
+  a tab only becomes agent-controlled when the extension opened it for that
+  session, so pointing the agent at an existing tab by id lets it read and
+  click that tab but leaves that tab's own dialogs and focus alone
+- The agent can no longer close or resize a tab the session did not open.
+  `browser_tabs action=close` and `browser_resize` used to act on any tab id
+  the agent named, including one it was only pointed at, so it could end a
+  user tab's lifetime or warp its rendered size. Both now refuse unless the
+  session opened that tab. Heavy-asset blocking also no longer follows the
+  agent onto one of the user's own tabs it merely named
+- Viewport emulation from `browser_resize` is now cleared automatically when
+  the agent lets go of a tab, instead of leaving the page rendered at a
+  warped size forever
+- `browser_handle_dialog` can now actually control `alert()`. It gained an
+  `alert: "accept" | "dismiss"` option, and the choice is really sent to the
+  page instead of being dropped
+- The dialog policy now reaches the page's own `alert`/`confirm`/`prompt`. It
+  used to be written into the content script's isolated world while the code
+  answering the dialog ran in the page's main world, so `accept` and
+  `promptText` never took effect and the dialog log always came back empty
+- Ordinary browsing is no longer affected by the extension. With the
+  extension installed but no agent working on a page, that page's own
+  `alert`, `confirm`, and `prompt` behave normally and the user's own answer
+  stands. Previously `confirm()` was answered yes silently on every page,
+  agent-controlled or not
+- Stop now survives navigation and a service-worker restart. It is
+  remembered per tab in the background and re-armed on every page load, so
+  the agent cannot resume just because the page changed. Only the user's
+  Resume clears it
+- Stop now also blocks the actions the background drives directly through
+  the debugger — coordinate clicks, key presses, navigation, back/forward/
+  reload, script evaluation, and resize. These used to bypass the on-page
+  Stop entirely. Read-only calls (snapshot, text, screenshot, console,
+  network, status, tabs) keep working so the agent can still report that it
+  was stopped
+- Screenshots keep working after a Stop: the overlay's own status and
+  hide/restore calls are no longer blocked by the Stop gate
 - Sessions (current tab, group, title, color) now persist in
   `chrome.storage.session`, so a service-worker restart no longer opens a new
   tab and group on the next navigate

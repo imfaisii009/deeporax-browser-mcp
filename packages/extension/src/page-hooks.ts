@@ -118,7 +118,9 @@ export const MAIN_WORLD_HOOKS = `(() => {
   window.__deeporaxHooksInstalled = true;
   window.__deeporaxConsole = window.__deeporaxConsole || [];
   window.__deeporaxDialogs = window.__deeporaxDialogs || [];
-  window.__deeporaxDialogPolicy = window.__deeporaxDialogPolicy || {};
+  // Left undefined until dialog_policy actually sets it, so the stubs below
+  // can tell "nobody asked to control dialogs here" apart from "policy says
+  // do nothing".
 
   const push = (level, args) => {
     try {
@@ -148,19 +150,40 @@ export const MAIN_WORLD_HOOKS = `(() => {
     push('error', ['UnhandledRejection: ' + String(ev.reason)]);
   });
 
-  const policy = () => window.__deeporaxDialogPolicy || {};
+  // dialog_policy (dom-actions.ts) writes the policy in the isolated world,
+  // a different window object than this MAIN-world script, so it has to
+  // arrive here as an event instead of a direct property read.
+  window.addEventListener('__deeporax_dialog_policy', (ev) => {
+    window.__deeporaxDialogPolicy = Object.assign({}, window.__deeporaxDialogPolicy, ev.detail);
+  });
+
+  // No policy means nobody (agent or tool) has asked to control dialogs on
+  // this page: fall through to the real function so the user sees their own
+  // dialog and their own answer stands. This is the invariant every stub
+  // below has to keep.
+  const policy = () => window.__deeporaxDialogPolicy;
+  const recordDialog = (entry) => {
+    window.__deeporaxDialogs.push(entry);
+    window.dispatchEvent(new CustomEvent('__deeporax_dialog', { detail: entry }));
+  };
+  const nativeAlert = window.alert;
+  const nativeConfirm = window.confirm;
+  const nativePrompt = window.prompt;
   window.alert = (message) => {
-    window.__deeporaxDialogs.push({ type: 'alert', message: String(message), ts: Date.now() });
+    recordDialog({ type: 'alert', message: String(message), ts: Date.now() });
+    if (!policy()) return nativeAlert(message);
     return undefined;
   };
   window.confirm = (message) => {
-    window.__deeporaxDialogs.push({ type: 'confirm', message: String(message), ts: Date.now() });
+    recordDialog({ type: 'confirm', message: String(message), ts: Date.now() });
     const p = policy();
+    if (!p) return nativeConfirm(message);
     return p.confirm !== undefined ? Boolean(p.confirm) : true;
   };
   window.prompt = (message, def) => {
-    window.__deeporaxDialogs.push({ type: 'prompt', message: String(message), ts: Date.now() });
+    recordDialog({ type: 'prompt', message: String(message), ts: Date.now() });
     const p = policy();
+    if (!p) return nativePrompt(message, def);
     if (p.prompt === null) return null;
     if (typeof p.prompt === 'string') return p.prompt;
     return def ?? '';

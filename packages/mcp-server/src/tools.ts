@@ -955,6 +955,10 @@ export function registerTools(server: McpServer): void {
     "Set how alert/confirm/prompt/beforeunload behave on the agent tab. Page hooks stub the JS functions and the debugger answers any native dialog that still opens, so dialogs never freeze automation; answers are recorded and readable via the dialogs list.",
     {
       tabId,
+      alert: z
+        .enum(["accept", "dismiss"])
+        .optional()
+        .describe("How to answer alert() (default accept)"),
       accept: z
         .boolean()
         .optional()
@@ -969,12 +973,13 @@ export function registerTools(server: McpServer): void {
         .optional()
         .describe("Leave the page when a beforeunload dialog appears (default true)"),
     },
-    async ({ tabId: id, accept, promptText, beforeunload }) => {
+    async ({ tabId: id, alert, accept, promptText, beforeunload }) => {
       try {
         return textResult(
           await call("dialog_policy", {
             tabId: id,
             policy: {
+              alert: alert ?? "accept",
               confirm: accept ?? true,
               prompt: promptText === undefined ? "" : promptText,
               beforeunload: beforeunload ?? true,

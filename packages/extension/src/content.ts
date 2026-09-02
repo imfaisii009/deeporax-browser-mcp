@@ -12,8 +12,28 @@ import {
   pushNetwork,
   type ConsoleEntry,
 } from "./page-hooks";
+import { setStopped } from "./agent-overlay";
 
 installPageHandler();
+
+// The overlay's stopped flag lives in this page's isolated world, which a
+// navigation wipes clean along with the rest of this content script. Mirror
+// Stop/Resume to the background (which survives navigations) so a fresh load
+// can ask whether this tab was left stopped and re-arm before any action runs.
+window.addEventListener("__deeporax_agent_stop", () => {
+  void chrome.runtime.sendMessage({ type: "deeporax-agent-stop" }).catch(() => {});
+});
+window.addEventListener("__deeporax_agent_resume", () => {
+  void chrome.runtime.sendMessage({ type: "deeporax-agent-resume" }).catch(() => {});
+});
+chrome.runtime
+  .sendMessage({ type: "deeporax-agent-stop-state" })
+  .then((res) => {
+    if (res?.stopped) setStopped(true);
+  })
+  .catch(() => {
+    /* background may not be ready yet, or doesn't support this message */
+  });
 
 // Capture MAIN-world console events
 window.addEventListener("__deeporax_console", ((ev: Event) => {

@@ -30,6 +30,20 @@ declare global {
 }
 
 /**
+ * alert/confirm/prompt are stubbed in the MAIN world (page-hooks.ts), a
+ * different `window` than this isolated-world content script. Each stub
+ * dispatches a `__deeporax_dialog` CustomEvent (the events reach across
+ * worlds even though the JS objects don't) so the `dialogs` DOM method has
+ * something real to read.
+ */
+type DialogRecord = { type: string; message: string; ts: number };
+const dialogBuffer: DialogRecord[] = [];
+window.addEventListener("__deeporax_dialog", ((ev: Event) => {
+  const detail = (ev as CustomEvent).detail as DialogRecord | undefined;
+  if (detail) dialogBuffer.push(detail);
+}) as EventListener);
+
+/**
  * Refs are bound to an element for as long as that element lives.
  *
  * Numbering them per snapshot in document order looks tidy and is quietly
@@ -1089,16 +1103,20 @@ export function handleDomMethod(
     case "dialog_policy": {
       const w = window as unknown as {
         __deeporaxDialogPolicy?: Record<string, unknown>;
-        __deeporaxDialogs?: unknown[];
       };
       w.__deeporaxDialogPolicy = {
         ...(w.__deeporaxDialogPolicy || {}),
         ...(params.policy as object),
       };
+      // The policy is read by alert/confirm/prompt in the MAIN world, so it
+      // has to be bridged across via an event, not just this isolated-world copy.
+      window.dispatchEvent(
+        new CustomEvent("__deeporax_dialog_policy", { detail: params.policy })
+      );
       return {
         ok: true,
         policy: w.__deeporaxDialogPolicy,
-        recent: (w.__deeporaxDialogs || []).slice(-10),
+        recent: dialogBuffer.slice(-10),
       };
     }
 
@@ -1322,9 +1340,8 @@ export function handleDomMethod(
     }
 
     case "dialogs": {
-      const w = window as unknown as { __deeporaxDialogs?: unknown[] };
-      const list = w.__deeporaxDialogs || [];
-      if (params.clear) w.__deeporaxDialogs = [];
+      const list = dialogBuffer.slice();
+      if (params.clear) dialogBuffer.length = 0;
       return { dialogs: list };
     }
 
@@ -1356,8 +1373,13 @@ export async function handleDomMethodAsync(
   params: Record<string, unknown>
 ): Promise<unknown> {
   const overlayOff = params.overlay === false;
+  // These overlay actions report the human's own Stop back and let the
+  // background hide/restore our chrome around every screenshot, so they must
+  // keep working after Stop or the agent can't even see that it happened.
+  const overlayAction = method === "overlay" ? String(params.action ?? "show") : "";
+  const OVERLAY_ALWAYS_ON = new Set(["status", "hide_for_capture", "restore_after_capture"]);
 
-  if (!overlayOff && isStopped()) {
+  if (!overlayOff && !OVERLAY_ALWAYS_ON.has(overlayAction) && isStopped()) {
     throw new Error(
       "Agent control was stopped by the user in this tab. They can press Resume on the on-page bar; do not retry until they do."
     );

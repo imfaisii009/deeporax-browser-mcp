@@ -331,6 +331,29 @@ export function resetStop(): void {
   stopped = false;
 }
 
+/**
+ * Re-arm (or clear) Stop without a click on the bar — used on content-script
+ * startup when the background says this tab was left stopped by a page that
+ * has since been replaced by navigation, which wipes the module state above.
+ * Mirrors what the Stop/Resume buttons already do so the bar matches reality.
+ */
+export function setStopped(v: boolean): void {
+  stopped = v;
+  const s = ensure();
+  if (v) {
+    s.frame.classList.add("on");
+    s.bar.classList.add("on");
+    setLabel("stopped");
+    s.stopBtn.style.display = "none";
+    s.resumeBtn.style.display = "";
+    if (idleTimer) clearTimeout(idleTimer);
+  } else {
+    setLabel("controlling this tab");
+    s.resumeBtn.style.display = "none";
+    s.stopBtn.style.display = "";
+  }
+}
+
 export function removeOverlay(): void {
   if (state?.host?.parentNode) state.host.parentNode.removeChild(state.host);
   state = null;
