@@ -321,7 +321,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "browser_screenshot",
-    "Take a screenshot of the tab for visual/layout QA only — never to confirm that browser_type/fill_form wrote a value (those tools already verify in the DOM and set next.skipScreenshot). PNG is saved under /tmp/deeporax-browser-mcp/screenshots (auto-pruned after 30m) and also returned as image content.",
+    `Take a screenshot of the tab for visual/layout QA only — never to confirm that browser_type/fill_form wrote a value (those tools already verify in the DOM and set next.skipScreenshot). PNG is saved under ${TMP_ROOT}/screenshots (auto-pruned after 30m) and also returned as image content.`,
     {
       tabId,
       format: z
@@ -397,12 +397,12 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "browser_clear_tmp",
-    "Delete deeporax-browser-mcp artifacts under /tmp/deeporax-browser-mcp. Use after reading a snapshot/screenshot, or to wipe everything.",
+    `Delete deeporax-browser-mcp artifacts under ${TMP_ROOT}. Use after reading a snapshot/screenshot, or to wipe everything.`,
     {
       path: z
         .string()
         .optional()
-        .describe("Specific file to delete (must be under /tmp/deeporax-browser-mcp). Omit to wipe all."),
+        .describe(`Specific file to delete (must be under ${TMP_ROOT}). Omit to wipe all.`),
       all: z
         .boolean()
         .optional()
@@ -415,7 +415,7 @@ export function registerTools(server: McpServer): void {
           return textResult(
             ok
               ? { deleted: path }
-              : { deleted: false, error: "Path not under /tmp/deeporax-browser-mcp or missing", path }
+              : { deleted: false, error: `Path not under ${TMP_ROOT} or missing`, path }
           );
         }
 
@@ -900,11 +900,21 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "browser_resize",
-    "Resize the browser window that owns the tab.",
+    "Emulate a viewport size on this session's agent tab via the debugger. The user's browser window is not resized or moved. Pass width:0 and height:0 to clear the emulation.",
     {
       tabId,
-      width: z.number().int().min(200).max(4000),
-      height: z.number().int().min(200).max(3000),
+      width: z
+        .number()
+        .int()
+        .min(0)
+        .max(4000)
+        .describe("Viewport width in CSS pixels; 0 with height:0 clears the emulation"),
+      height: z
+        .number()
+        .int()
+        .min(0)
+        .max(3000)
+        .describe("Viewport height in CSS pixels; 0 with width:0 clears the emulation"),
     },
     async (args) => {
       try {
@@ -942,7 +952,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     "browser_handle_dialog",
-    "Set how alert/confirm/prompt should behave (hooks intercept page dialogs so they do not freeze automation).",
+    "Set how alert/confirm/prompt/beforeunload behave on the agent tab. Page hooks stub the JS functions and the debugger answers any native dialog that still opens, so dialogs never freeze automation; answers are recorded and readable via the dialogs list.",
     {
       tabId,
       accept: z
@@ -954,8 +964,12 @@ export function registerTools(server: McpServer): void {
         .nullable()
         .optional()
         .describe("prompt() return value; null cancels"),
+      beforeunload: z
+        .boolean()
+        .optional()
+        .describe("Leave the page when a beforeunload dialog appears (default true)"),
     },
-    async ({ tabId: id, accept, promptText }) => {
+    async ({ tabId: id, accept, promptText, beforeunload }) => {
       try {
         return textResult(
           await call("dialog_policy", {
@@ -963,6 +977,7 @@ export function registerTools(server: McpServer): void {
             policy: {
               confirm: accept ?? true,
               prompt: promptText === undefined ? "" : promptText,
+              beforeunload: beforeunload ?? true,
             },
           })
         );

@@ -1358,7 +1358,9 @@ export async function handleDomMethodAsync(
   const overlayOff = params.overlay === false;
 
   if (!overlayOff && isStopped()) {
-    throw new Error("Agent control was stopped by the user in this tab. Ask them to resume.");
+    throw new Error(
+      "Agent control was stopped by the user in this tab. They can press Resume on the on-page bar; do not retry until they do."
+    );
   }
 
   // Animate the synthetic cursor onto the target so the human can follow along.

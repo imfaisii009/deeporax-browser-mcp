@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Native `alert`/`confirm`/`prompt`/`beforeunload` dialogs are answered by
+  the debugger (`Page.javascriptDialogOpening`) per the `browser_handle_dialog`
+  policy and recorded, so a dialog on a strict-CSP page can no longer freeze
+  the tab for the full command timeout
+- `browser_handle_dialog` accepts `beforeunload` (default: leave the page)
+- The on-page bar shows a **Resume** button after the user presses Stop; the
+  agent still cannot clear a Stop itself
+- Agent tabs get `Emulation.setFocusEmulationEnabled` so pages that check
+  `document.hasFocus()` behave while the tab stays in the background
 - `browser_act_matches`: one-shot click/hover/type on every element matching a
   text/role pattern (for repeated Reply/Follow/checkbox UIs) instead of N
   screenshot or click loops
@@ -38,6 +47,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sessions (current tab, group, title, color) now persist in
+  `chrome.storage.session`, so a service-worker restart no longer opens a new
+  tab and group on the next navigate
+- `browser_resize` emulates the viewport on the agent tab via the debugger
+  instead of resizing the user's browser window; `0,0` clears the emulation
+- Session tab groups are expanded only when created; the agent no longer
+  re-expands a group the user collapsed on every action
+- New agent tabs open in the window that already holds the session's group,
+  are marked `autoDiscardable:false` so Chrome does not discard them under
+  memory pressure, and `tabs.onReplaced` remaps a swapped tab id
+- If no normal window exists, navigate creates an unfocused window instead of
+  failing
+- Removed the implicit "last session" fallback in the background: every call
+  is keyed by its own `sessionId`
+- MCP server reports the package version instead of `0.1.0`
+- Temp artifacts use `os.tmpdir()` instead of a hardcoded `/tmp` path
+- Popup hint no longer suggests snapshotting the user's current tab
 - Agent navigate / new-tab / screenshot no longer steal focus from the tab you
   are using. Work continues in the session group in the background; only the
   install welcome page still opens focused

@@ -189,20 +189,47 @@ const SESSION_GROUP_COLORS = [
 ] as const;
 const GROUP_TITLE_MAX = 28;
 const sessions = new Map<string, AgentSession>();
-/** Request currently being handled — set once per bridge call. */
-let activeSessionId = "default";
 
-function sessionOf(sessionId?: string): AgentSession {
-  const id =
-    typeof sessionId === "string" && sessionId.trim()
-      ? sessionId.trim()
-      : activeSessionId || "default";
-  activeSessionId = id;
-  let s = sessions.get(id);
+const SESSIONS_KEY = "sessions";
+
+/**
+ * Service workers get killed and restarted at any time. Without this, that
+ * restart silently forgot every session's group and current tab, and the
+ * agent would open a fresh tab/group mid-chat for no reason the user caused.
+ */
+async function loadSessions(): Promise<void> {
+  try {
+    const stored = await chrome.storage.session.get(SESSIONS_KEY);
+    const saved = stored[SESSIONS_KEY] as Record<string, AgentSession> | undefined;
+    if (!saved) return;
+    for (const [id, s] of Object.entries(saved)) {
+      sessions.set(id, {
+        currentTabId: s.currentTabId,
+        groupId: s.groupId,
+        title: s.title,
+        color: s.color,
+        lastUsed: s.lastUsed,
+      });
+    }
+  } catch {
+    /* first run, or storage unavailable — start empty */
+  }
+}
+const sessionsReady: Promise<void> = loadSessions();
+
+/** Fire-and-forget: never make a response wait on this write. */
+function saveSessions(): void {
+  void chrome.storage.session
+    .set({ [SESSIONS_KEY]: Object.fromEntries(sessions) })
+    .catch(() => {});
+}
+
+function sessionOf(sessionId: string): AgentSession {
+  let s = sessions.get(sessionId);
   if (!s) {
     // Stable color per session id so two chats stay visually distinct.
     let hash = 0;
-    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < sessionId.length; i++) hash = (hash * 31 + sessionId.charCodeAt(i)) >>> 0;
     s = {
       currentTabId: null,
       groupId: null,
@@ -210,13 +237,13 @@ function sessionOf(sessionId?: string): AgentSession {
       color: SESSION_GROUP_COLORS[hash % SESSION_GROUP_COLORS.length]!,
       lastUsed: Date.now(),
     };
-    sessions.set(id, s);
+    sessions.set(sessionId, s);
   }
   s.lastUsed = Date.now();
   return s;
 }
 
-function rememberTab(tabId: number, sessionId?: string): number {
+function rememberTab(tabId: number, sessionId: string): number {
   const s = sessionOf(sessionId);
   s.currentTabId = tabId;
   return tabId;
@@ -282,7 +309,7 @@ function topicFromUrl(url: string, explicit?: string): string {
 
 /** Live tab id for THIS session's group only. Never another chat's group. */
 async function findSessionGroupTab(
-  sessionId?: string
+  sessionId: string
 ): Promise<number | null> {
   const groupId = await resolveSessionGroupId(sessionId);
   if (groupId == null) return null;
@@ -303,7 +330,7 @@ async function findSessionGroupTab(
 }
 
 async function resolveSessionGroupId(
-  sessionId?: string
+  sessionId: string
 ): Promise<number | null> {
   const s = sessionOf(sessionId);
   if (s.groupId != null) {
@@ -325,8 +352,8 @@ async function resolveSessionGroupId(
  */
 async function placeInSessionGroup(
   tabId: number,
-  topic?: string,
-  sessionId?: string
+  topic: string | undefined,
+  sessionId: string
 ): Promise<number | null> {
   try {
     const s = sessionOf(sessionId);
@@ -341,14 +368,10 @@ async function placeInSessionGroup(
         const g = await chrome.tabGroups.get(s.groupId);
         if (g.windowId === tab.windowId) {
           await chrome.tabs.group({ tabIds: tabId, groupId: s.groupId });
+          // Never re-expand here: the user may have collapsed this group on
+          // purpose, and reusing it shouldn't undo that.
           if (g.title !== title || g.color !== color) {
-            await chrome.tabGroups.update(s.groupId, {
-              title,
-              color,
-              collapsed: false,
-            });
-          } else {
-            await chrome.tabGroups.update(s.groupId, { collapsed: false });
+            await chrome.tabGroups.update(s.groupId, { title, color });
           }
           return s.groupId;
         }
@@ -373,8 +396,8 @@ async function placeInSessionGroup(
 }
 
 async function resolveTabId(
-  tabId?: number,
-  sessionId?: string
+  tabId: number | undefined,
+  sessionId: string
 ): Promise<number> {
   const s = sessionOf(sessionId);
 
@@ -447,8 +470,8 @@ async function assertScriptable(tabId: number): Promise<chrome.tabs.Tab> {
 }
 
 async function getTab(
-  tabId?: number,
-  sessionId?: string
+  tabId: number | undefined,
+  sessionId: string
 ): Promise<chrome.tabs.Tab> {
   const id = await resolveTabId(tabId, sessionId);
   try {
@@ -590,7 +613,20 @@ async function safeDom(
 
 // --- Method router ----------------------------------------------------------
 
+/**
+ * Sessions must be loaded before any method reads them, and saved after every
+ * method in case this call is what a service-worker restart interrupts next.
+ */
 async function handleMethod(req: BridgeRequest): Promise<unknown> {
+  await sessionsReady;
+  try {
+    return await handleMethodInner(req);
+  } finally {
+    saveSessions();
+  }
+}
+
+async function handleMethodInner(req: BridgeRequest): Promise<unknown> {
   const method = req.method;
   const params = (req.params ?? {}) as Record<string, unknown>;
   const tabIdParam = params.tabId as number | undefined;
@@ -1032,6 +1068,18 @@ async function handleMethod(req: BridgeRequest): Promise<unknown> {
       const id = await resolveTabId(tabIdParam, sid);
       await assertScriptable(id);
       await injectMainHooks(id);
+      if (method === "dialog_policy") {
+        try {
+          // The page hooks below still record the policy for pages the
+          // debugger cannot attach to; this just makes cdp the one actually
+          // answering native dialogs when it can.
+          if (await cdp.attach(id)) {
+            cdp.setDialogPolicy(id, (params.policy ?? {}) as cdp.DialogPolicy);
+          }
+        } catch {
+          /* page hooks still get the policy via safeDom */
+        }
+      }
       const result = await safeDom(id, method, params);
       if (method === "snapshot") {
         const snap = result as {
@@ -1055,6 +1103,17 @@ async function handleMethod(req: BridgeRequest): Promise<unknown> {
           patterns: snap.patterns ?? [],
           refGeneration: snap.refGeneration,
           ...(coach ? { note: coach } : {}),
+        };
+      }
+      if (method === "dialogs") {
+        // Page hooks only see JS-side alert/confirm/prompt overrides; native
+        // dialogs (beforeunload, and anything the page can't intercept) only
+        // show up through cdp. Merge both logs into one timeline.
+        const pageDialogs = (result as { dialogs?: Array<{ ts: number }> }).dialogs ?? [];
+        const native = cdp.takeDialogs(id, Boolean(params.clear));
+        return {
+          ...(result as Record<string, unknown>),
+          dialogs: [...pageDialogs, ...native].sort((a, b) => a.ts - b.ts),
         };
       }
       return result;
@@ -1286,17 +1345,36 @@ async function handleMethod(req: BridgeRequest): Promise<unknown> {
     }
 
     case "resize": {
+      // Emulated, not real: resizing the user's actual window would yank it
+      // out from under them while the agent works in the background.
       const tab = await getTab(tabIdParam, sid);
+      if (!tab.id) throw new Error("Tab has no id");
+      const id = tab.id;
+      await assertScriptable(id);
       const width = Number(params.width);
       const height = Number(params.height);
-      if (!Number.isFinite(width) || !Number.isFinite(height)) {
-        throw new Error("width and height are required");
+      if (!Number.isFinite(width) || width < 0 || !Number.isFinite(height) || height < 0) {
+        throw new Error("width and height must be finite numbers >= 0");
       }
-      await chrome.windows.update(tab.windowId, {
-        width: Math.round(width),
-        height: Math.round(height),
-      });
-      return { ok: true, width, height, windowId: tab.windowId };
+      if (width === 0 && height === 0) {
+        // No debugger means no override exists; nothing to clear.
+        if (await cdp.attach(id)) await cdp.clearViewport(id);
+        return { ok: true, cleared: true, tabId: id };
+      }
+      if (!(await cdp.attach(id))) {
+        throw new Error(
+          `Viewport emulation needs the debugger: ${cdp.unavailableReason(id) ?? "attach failed"}. Close DevTools on the agent tab and retry.`
+        );
+      }
+      await cdp.setViewport(id, { width, height });
+      return {
+        ok: true,
+        width,
+        height,
+        tabId: id,
+        emulated: true,
+        note: "Viewport emulated on the agent tab; the user's window was not resized. Pass 0,0 to clear.",
+      };
     }
 
     case "batch": {
@@ -1663,6 +1741,37 @@ async function setBlockHeavyAssets(on: boolean): Promise<{
 }
 
 /**
+ * Create a tab without stealing focus. chrome.tabs.create throws when there
+ * is no normal window to put it in (e.g. the user closed every window); fall
+ * back to a background window instead of failing the whole request.
+ */
+async function createBackgroundTab(
+  createProps: chrome.tabs.CreateProperties
+): Promise<chrome.tabs.Tab> {
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.create({ ...createProps, active: false });
+  } catch {
+    try {
+      // The session's window may have just closed; any normal window will do.
+      const { windowId: _gone, ...rest } = createProps;
+      tab = await chrome.tabs.create({ ...rest, active: false });
+    } catch {
+      const win = await chrome.windows.create({ url: createProps.url, focused: false });
+      const first = win?.tabs?.[0];
+      if (!first) throw new Error("Failed to create a window for the agent tab");
+      tab = first;
+    }
+  }
+  if (tab.id != null) {
+    // Agents leave tabs open in the background for a while; don't let Chrome
+    // discard them for memory and lose the page state mid-task.
+    await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
+  }
+  return tab;
+}
+
+/**
  * Open a tab and, when heavy-asset blocking is on, attach Fetch before the
  * real navigation so the first image/font wave is already intercepted.
  */
@@ -1671,12 +1780,21 @@ async function openTabForSession(
   sid: string,
   topic?: string
 ): Promise<{ tabId: number; groupId: number | null }> {
+  // Reuse the session's own window when its group is still alive, so a
+  // second navigate doesn't land in whatever window the user is now using.
+  const s = sessionOf(sid);
+  let windowId: number | undefined;
+  if (s.groupId != null) {
+    try {
+      windowId = (await chrome.tabGroups.get(s.groupId)).windowId;
+    } catch {
+      s.groupId = null;
+    }
+  }
+
   // Background tabs: keep the user's current tab focused while the agent works.
   if (blockHeavyAssets) {
-    const blank = await chrome.tabs.create({
-      url: "about:blank",
-      active: false,
-    });
+    const blank = await createBackgroundTab({ url: "about:blank", windowId });
     if (!blank.id) throw new Error("Failed to create tab");
     rememberTab(blank.id, sid);
     const groupId = await placeInSessionGroup(blank.id, topic, sid);
@@ -1684,7 +1802,7 @@ async function openTabForSession(
     await chrome.tabs.update(blank.id, { url });
     return { tabId: blank.id, groupId };
   }
-  const tab = await chrome.tabs.create({ url, active: false });
+  const tab = await createBackgroundTab({ url, windowId });
   if (!tab.id) throw new Error("Failed to create tab");
   rememberTab(tab.id, sid);
   const groupId = await placeInSessionGroup(tab.id, topic, sid);
@@ -1754,19 +1872,43 @@ chrome.debugger.onDetach.addListener((source) => {
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await sessionsReady;
   networkByTab.delete(tabId);
   netEnabled.delete(tabId);
   fetchBlockedTabs.delete(tabId);
   for (const s of sessions.values()) {
     if (s.currentTabId === tabId) s.currentTabId = null;
   }
+  saveSessions();
+});
+
+// Prerendering and some discard/restore flows swap a tab's id without ever
+// firing onRemoved. Without this, a session would still think its tab is
+// gone even though the same page is still open under the new id.
+chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+  await sessionsReady;
+  for (const s of sessions.values()) {
+    if (s.currentTabId === removedTabId) s.currentTabId = addedTabId;
+  }
+  const net = networkByTab.get(removedTabId);
+  if (net) {
+    networkByTab.set(addedTabId, net);
+    networkByTab.delete(removedTabId);
+  }
+  // The debugger session died with the old renderer; the new tab has none
+  // yet, so the next call re-attaches and re-arms rather than assuming.
+  netEnabled.delete(removedTabId);
+  fetchBlockedTabs.delete(removedTabId);
+  cdp.forget(removedTabId);
+  saveSessions();
 });
 
 // Re-arm Fetch on agent tabs after a navigation starts (renderer swap drops it).
-chrome.tabs.onUpdated.addListener((tabId, info) => {
+chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   if (!blockHeavyAssets) return;
   if (info.status !== "loading") return;
+  await sessionsReady;
   let owned = false;
   for (const s of sessions.values()) {
     if (s.currentTabId === tabId) {

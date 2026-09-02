@@ -10,7 +10,7 @@ const COPY: Record<
     kicker: "Bridge · on",
     title: "Connected",
     detail: "MCP client can drive this browser.",
-    hint: 'In your agent, try: <code>snapshot my current tab</code>',
+    hint: 'In your agent, try: <code>open example.com and take a snapshot</code>',
   },
   connecting: {
     kicker: "Bridge · linking",

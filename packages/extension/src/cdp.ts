@@ -87,6 +87,18 @@ function describeKey(raw: string) {
  */
 const RETRY_ATTACH_AFTER_MS = 5_000;
 
+/** Best-effort setup run after every successful attach. Page.enable and focus
+ * emulation are nice to have, not required for input/evaluate to work, so a
+ * failure here must never make attach() itself report false. */
+async function prime(tabId: number): Promise<void> {
+  // Raw sendCommand, not send(): send() reattaches on "not attached", and
+  // attach() calls prime(), so the two would recurse on a flapping session.
+  await chrome.debugger.sendCommand({ tabId }, "Page.enable").catch(() => {});
+  await chrome.debugger
+    .sendCommand({ tabId }, "Emulation.setFocusEmulationEnabled", { enabled: true })
+    .catch(() => {});
+}
+
 export async function attach(tabId: number): Promise<boolean> {
   if (attached.has(tabId)) return true;
 
@@ -103,6 +115,7 @@ export async function attach(tabId: number): Promise<boolean> {
       "debugger attach"
     );
     attached.add(tabId);
+    await prime(tabId);
     return true;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -112,6 +125,7 @@ export async function attach(tabId: number): Promise<boolean> {
     // send commands, so ask instead of assuming.
     if (/already attached/i.test(message) && (await sessionIsOurs(tabId))) {
       attached.add(tabId);
+      await prime(tabId);
       return true;
     }
     // Chrome reports "Cannot access a chrome-extension:// URL of different
@@ -171,6 +185,8 @@ export function unavailableReason(tabId: number): string | undefined {
 export function forget(tabId: number): void {
   attached.delete(tabId);
   unavailable.delete(tabId);
+  dialogPolicies.delete(tabId);
+  dialogBuffers.delete(tabId);
 }
 
 /** A frozen renderer must not hang the caller forever. */
@@ -666,6 +682,123 @@ export async function captureScreenshot(
   }
   return { data, format: "jpeg", quality, degraded };
 }
+
+// --- Viewport ----------------------------------------------------------------
+
+export async function setViewport(
+  tabId: number,
+  size: { width: number; height: number }
+): Promise<void> {
+  await send(tabId, "Emulation.setDeviceMetricsOverride", {
+    width: size.width,
+    height: size.height,
+    deviceScaleFactor: 0,
+    mobile: false,
+  });
+}
+
+export async function clearViewport(tabId: number): Promise<void> {
+  await send(tabId, "Emulation.clearDeviceMetricsOverride");
+}
+
+// --- Dialogs ------------------------------------------------------------------
+
+export type DialogPolicy = {
+  alert?: "accept" | "dismiss";
+  confirm?: boolean;
+  prompt?: string | null;
+  beforeunload?: boolean;
+};
+
+export type DialogRecord = {
+  type: string;
+  message: string;
+  ts: number;
+  handled: "accept" | "dismiss";
+  promptText?: string;
+  via: "cdp";
+};
+
+// `prompt` has no static default here: its accepted text falls back to the
+// dialog's own `defaultPrompt` at handling time, not a fixed value.
+const DEFAULT_DIALOG_POLICY: DialogPolicy = {
+  alert: "accept",
+  confirm: true,
+  beforeunload: true,
+};
+
+const dialogPolicies = new Map<number, DialogPolicy>();
+const dialogBuffers = new Map<number, DialogRecord[]>();
+const MAX_DIALOGS_PER_TAB = 50;
+
+export function setDialogPolicy(tabId: number, policy: DialogPolicy): DialogPolicy {
+  const effective = { ...DEFAULT_DIALOG_POLICY, ...dialogPolicies.get(tabId), ...policy };
+  dialogPolicies.set(tabId, effective);
+  return effective;
+}
+
+export function takeDialogs(tabId: number, clear = false): DialogRecord[] {
+  const records = dialogBuffers.get(tabId) ?? [];
+  const copy = records.slice();
+  if (clear) dialogBuffers.set(tabId, []);
+  return copy;
+}
+
+// A dialog blocks most other CDP commands on the tab, so answer it through
+// chrome.debugger.sendCommand directly rather than send()'s reattach-on-error
+// path, and never let a failure here throw back into the event dispatcher.
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (method !== "Page.javascriptDialogOpening") return;
+  const tabId = source.tabId;
+  if (tabId == null || !params) return;
+
+  const p = params as {
+    type: "alert" | "confirm" | "prompt" | "beforeunload";
+    message: string;
+    defaultPrompt?: string;
+  };
+  const policy = dialogPolicies.get(tabId) ?? DEFAULT_DIALOG_POLICY;
+
+  let accept: boolean;
+  let promptText: string | undefined;
+  switch (p.type) {
+    case "confirm":
+      accept = policy.confirm ?? true;
+      break;
+    case "prompt":
+      accept = policy.prompt !== null;
+      if (accept) promptText = policy.prompt ?? p.defaultPrompt ?? "";
+      break;
+    case "beforeunload":
+      accept = policy.beforeunload ?? true;
+      break;
+    case "alert":
+    default:
+      accept = policy.alert !== "dismiss";
+      break;
+  }
+
+  const record: DialogRecord = {
+    type: p.type,
+    message: p.message,
+    ts: Date.now(),
+    handled: accept ? "accept" : "dismiss",
+    via: "cdp",
+    ...(promptText !== undefined ? { promptText } : {}),
+  };
+  const buf = dialogBuffers.get(tabId) ?? [];
+  buf.push(record);
+  if (buf.length > MAX_DIALOGS_PER_TAB) buf.shift();
+  dialogBuffers.set(tabId, buf);
+
+  chrome.debugger
+    .sendCommand(
+      { tabId },
+      "Page.handleJavaScriptDialog",
+      promptText !== undefined ? { accept, promptText } : { accept }
+    )
+    .catch(() => {});
+});
 
 // --- Lifecycle --------------------------------------------------------------
 

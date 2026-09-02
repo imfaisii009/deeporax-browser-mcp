@@ -5,9 +5,10 @@
  */
 import { mkdirSync, readdirSync, unlinkSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-/** Always under /tmp so paths are stable and easy to wipe. */
-export const TMP_ROOT = "/tmp/deeporax-browser-mcp";
+/** Under the OS temp dir so paths are stable and easy to wipe. */
+export const TMP_ROOT = join(tmpdir(), "deeporax-browser-mcp");
 const SNAP_DIR = join(TMP_ROOT, "snapshots");
 const SHOT_DIR = join(TMP_ROOT, "screenshots");
 

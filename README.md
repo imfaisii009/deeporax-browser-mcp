@@ -389,7 +389,7 @@ You should see `connected: true` and a DOM snapshot with refs like `e1`, `e2`.
 | `browser_tabs` | list / new / close / select (`sessionOnly` lists only agent tabs) |
 | `browser_back` / `browser_forward` / `browser_reload` | History |
 | `browser_wait` | Wait for time, text, or a selector (short caps; prefer snapshot) |
-| `browser_resize` | Resize the browser window |
+| `browser_resize` | Emulate a viewport size on the agent tab (your window is never resized) |
 
 **Debug**
 
@@ -405,7 +405,7 @@ You should see `connected: true` and a DOM snapshot with refs like `e1`, `e2`.
 | Tool | Purpose |
 |------|---------|
 | `browser_status` | Extension connection, session tab, and anti-loop guidance |
-| `browser_overlay` | Show/hide the overlay, or resume after a user pressed Stop |
+| `browser_overlay` | Set the status label, or check whether the user pressed Stop (only they can resume) |
 | `browser_highlight` | Outline an element so a human can see it |
 | `browser_batch` | Run several actions in one round-trip |
 | `browser_clear_tmp` | Delete saved snapshots and screenshots |
@@ -442,14 +442,16 @@ You can always see when an agent is driving a tab, and stop it.
 - A pulsing orange border around the viewport
 - A status pill naming the current action: **Deeporax** — *clicking link "Sign in"*
 - A **Stop** button that halts agent control for that tab
+- A **Resume** button that replaces Stop once pressed, so only the person at the
+  keyboard can hand control back
 - A cursor that glides to each target and pulses right before the click fires
 
 The pill appears automatically during any action and hides after 15 seconds of
 inactivity.
 
-**Stop** is a hard stop. Every later action in that tab returns an error until you
-call `browser_overlay` with `action: "resume"`. To run one action without the
-visuals, pass `overlay: false` to it.
+**Stop** is a hard stop. Every later action in that tab returns an error until the
+user clicks **Resume** on the on-page bar — no tool call can clear a Stop. To run
+one action without the visuals, pass `overlay: false` to it.
 
 The overlay lives in a closed shadow root, so page CSS cannot restyle it and page
 scripts cannot read it. Everything is `pointer-events: none` except the Stop button,
@@ -495,18 +497,22 @@ currently expects 17373, so change both sides together.
 
 ## Temporary files
 
-Snapshots and screenshots are written under:
+Snapshots and screenshots are written under `deeporax-browser-mcp/` inside your
+OS's temp directory (Node's `os.tmpdir()`):
 
 ```
-/tmp/deeporax-browser-mcp/snapshots/*.txt
-/tmp/deeporax-browser-mcp/screenshots/*.png
+<os temp dir>/deeporax-browser-mcp/snapshots/*.txt
+<os temp dir>/deeporax-browser-mcp/screenshots/*.png
 ```
+
+On macOS that resolves to a path under `/var/folders/.../T/`; on Linux it is
+typically under `/tmp/`.
 
 - Auto-pruned after **30 minutes**, and capped at **40 files** per kind
 - Tool results include the saved path
 - `persistOnly: true` returns only the path (handy when the body is huge)
 - `browser_clear_tmp` deletes one path or wipes the whole tree
-- `/tmp` is also cleared on reboot on many systems
+- The OS temp directory is also cleared on reboot on many systems
 
 ## Configuration
 

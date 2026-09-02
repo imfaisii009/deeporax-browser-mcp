@@ -33,6 +33,10 @@ It drives the browser you already use, with your profile and the sessions you
 are already signed in to, instead of launching a separate automated browser
 that knows none of that.
 
+The assistant works in its own background tab group, separate from the tabs
+you have open. It does not take over the tab or window you are looking at, so
+you can keep working while it acts.
+
 What an assistant can do once connected:
 
 - Read the page as a structured outline of its headings, links, buttons and

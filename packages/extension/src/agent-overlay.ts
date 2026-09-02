@@ -26,6 +26,7 @@ type OverlayState = {
   cursor: HTMLElement;
   ripple: HTMLElement;
   stopBtn: HTMLElement;
+  resumeBtn: HTMLElement;
 };
 
 let state: OverlayState | null = null;
@@ -105,6 +106,25 @@ const CSS = `
 }
 .stop:hover { background: ${ACCENT_HOVER}; }
 .stop:focus-visible {
+  outline: 2px solid ${PAPER};
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px ${INK};
+}
+.resume {
+  pointer-events: auto;
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 1.5px solid ${INK};
+  border-radius: 999px;
+  background: ${PAPER};
+  color: ${INK};
+  font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+.resume:hover { background: #f2f0e4; }
+.resume:focus-visible {
   outline: 2px solid ${PAPER};
   outline-offset: 2px;
   box-shadow: 0 0 0 4px ${INK};
@@ -205,8 +225,28 @@ function ensure(): OverlayState {
     e.stopPropagation();
     stopped = true;
     setLabel("stopped");
+    stopBtn.style.display = "none";
+    resumeBtn.style.display = "";
+    if (idleTimer) clearTimeout(idleTimer);
     window.dispatchEvent(new CustomEvent("__deeporax_agent_stop"));
-    setTimeout(() => hide(), 900);
+  });
+
+  const resumeBtn = document.createElement("button");
+  resumeBtn.className = "resume";
+  resumeBtn.type = "button";
+  resumeBtn.textContent = "Resume";
+  resumeBtn.setAttribute("aria-label", "Resume browser agent");
+  resumeBtn.setAttribute("aria-describedby", "__deeporax_agent_label");
+  resumeBtn.style.display = "none";
+  resumeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    resetStop();
+    setLabel("controlling this tab");
+    resumeBtn.style.display = "none";
+    stopBtn.style.display = "";
+    window.dispatchEvent(new CustomEvent("__deeporax_agent_resume"));
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => hide(), 15_000);
   });
 
   const cursor = document.createElement("div");
@@ -218,12 +258,12 @@ function ensure(): OverlayState {
   ripple.className = "ripple";
   ripple.setAttribute("aria-hidden", "true");
 
-  bar.append(mark, label, stopBtn);
+  bar.append(mark, label, stopBtn, resumeBtn);
   wrap.append(frame, bar, ripple, cursor);
   root.append(style, wrap);
   (document.body || document.documentElement).appendChild(host);
 
-  state = { host, root, frame, bar, label, cursor, ripple, stopBtn };
+  state = { host, root, frame, bar, label, cursor, ripple, stopBtn, resumeBtn };
   return state;
 }
 
