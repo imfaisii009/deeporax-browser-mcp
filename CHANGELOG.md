@@ -186,6 +186,6 @@ Initial public release.
 - CI workflow (typecheck, smoke, pack dry-run)
 - Release workflow (npm publish + extension zip asset)
 
-[Unreleased]: https://github.com/imfaisii/deeporax-browser-mcp/compare/v0.1.2...HEAD
-[0.1.2]: https://github.com/imfaisii/deeporax-browser-mcp/compare/v0.1.0...v0.1.2
-[0.1.0]: https://github.com/imfaisii/deeporax-browser-mcp/releases/tag/v0.1.0
+[Unreleased]: https://github.com/imfaisii009/deeporax-browser-mcp/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/imfaisii009/deeporax-browser-mcp/compare/v0.1.0...v0.1.2
+[0.1.0]: https://github.com/imfaisii009/deeporax-browser-mcp/releases/tag/v0.1.0

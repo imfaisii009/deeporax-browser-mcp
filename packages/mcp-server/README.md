@@ -70,7 +70,7 @@ claude mcp add deeporax-browser-mcp -- npx -y deeporax-browser-mcp
 }
 ```
 
-**Zed** (`context_servers`), **Codex CLI** (`~/.codex/config.toml`), **opencode**, **Continue**, and **Goose** are covered in the [full docs](https://github.com/imfaisii/deeporax-browser-mcp#a-install-the-mcp-server).
+**Zed** (`context_servers`), **Codex CLI** (`~/.codex/config.toml`), **opencode**, **Continue**, and **Goose** are covered in the [full docs](https://github.com/imfaisii009/deeporax-browser-mcp#a-install-the-mcp-server).
 
 ## Extension
 
@@ -87,7 +87,7 @@ This package ships an unpacked Chrome extension in `extension/`.
 2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select that folder
 3. Keep Chrome open. The toolbar badge shows **ON** when the MCP server is connected.
 
-Works in Chrome, Edge, Brave, Arc, and other Chromium browsers. You can also grab `extension-dist.zip` from [GitHub Releases](https://github.com/imfaisii/deeporax-browser-mcp/releases).
+Works in Chrome, Edge, Brave, Arc, and other Chromium browsers. You can also grab `extension-dist.zip` from [GitHub Releases](https://github.com/imfaisii009/deeporax-browser-mcp/releases).
 
 ## Verify
 
@@ -110,7 +110,7 @@ Prefer `browser_fill_form` for multi-field forms. Prefer `browser_snapshot` over
 
 Full tool list, overlay behavior, troubleshooting, security notes, and source install:
 
-https://github.com/imfaisii/deeporax-browser-mcp
+https://github.com/imfaisii009/deeporax-browser-mcp
 
 ## License
 

@@ -2,7 +2,7 @@
 
 ## Bugs and feature requests
 
-Open a [GitHub issue](https://github.com/imfaisii/deeporax-browser-mcp/issues) using the templates.
+Open a [GitHub issue](https://github.com/imfaisii009/deeporax-browser-mcp/issues) using the templates.
 
 Include:
 
@@ -13,7 +13,7 @@ Include:
 
 ## Questions
 
-Use [GitHub Discussions](https://github.com/imfaisii/deeporax-browser-mcp/discussions) for questions and ideas. Prefer issues for actionable bugs and feature requests.
+Use [GitHub Discussions](https://github.com/imfaisii009/deeporax-browser-mcp/discussions) for questions and ideas. Prefer issues for actionable bugs and feature requests.
 
 ## Security
 

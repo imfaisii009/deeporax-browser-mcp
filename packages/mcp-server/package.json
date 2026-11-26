@@ -7,12 +7,12 @@
   "author": "Faisal Ashfaq <cfaysal099@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/imfaisii/deeporax-browser-mcp.git"
+    "url": "git+https://github.com/imfaisii009/deeporax-browser-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/imfaisii/deeporax-browser-mcp/issues"
+    "url": "https://github.com/imfaisii009/deeporax-browser-mcp/issues"
   },
-  "homepage": "https://github.com/imfaisii/deeporax-browser-mcp#readme",
+  "homepage": "https://github.com/imfaisii009/deeporax-browser-mcp#readme",
   "keywords": [
     "browser-mcp",
     "deeporax",

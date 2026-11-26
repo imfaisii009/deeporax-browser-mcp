@@ -11,7 +11,7 @@ Requirements:
 - Chrome or Chromium
 
 ```bash
-git clone https://github.com/imfaisii/deeporax-browser-mcp.git
+git clone https://github.com/imfaisii009/deeporax-browser-mcp.git
 cd deeporax-browser-mcp
 bun install
 bun run build

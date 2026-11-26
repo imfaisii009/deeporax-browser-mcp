@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a bug. **Security issues** go to email (see [SECURITY.md](https://github.com/imfaisii/deeporax-browser-mcp/blob/main/SECURITY.md)), not here.
+        Thanks for filing a bug. **Security issues** go to email (see [SECURITY.md](https://github.com/imfaisii009/deeporax-browser-mcp/blob/main/SECURITY.md)), not here.
   - type: textarea
     id: what-happened
     attributes:

@@ -4,7 +4,7 @@ Control a real Chrome browser from any MCP client: navigate, snapshot the DOM wi
 
 [![npm](https://img.shields.io/npm/v/deeporax-browser-mcp.svg)](https://www.npmjs.com/package/deeporax-browser-mcp)
 [![license](https://img.shields.io/npm/l/deeporax-browser-mcp.svg)](LICENSE)
-[![CI](https://github.com/imfaisii/deeporax-browser-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/imfaisii/deeporax-browser-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/imfaisii009/deeporax-browser-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/imfaisii009/deeporax-browser-mcp/actions/workflows/ci.yml)
 
 Headless tools launch a throwaway browser. This one drives **the browser you are already using**, with your profile, your logins, and your open tabs. An on-page overlay shows what the agent is doing and lets you stop it at any moment.
 
@@ -337,7 +337,7 @@ Then:
 
 **Option 2: download a release zip**
 
-Grab `extension-dist.zip` from [Releases](https://github.com/imfaisii/deeporax-browser-mcp/releases), unzip, and load it the same way.
+Grab `extension-dist.zip` from [Releases](https://github.com/imfaisii009/deeporax-browser-mcp/releases), unzip, and load it the same way.
 
 **Option 3: build from source**
 
@@ -525,7 +525,7 @@ The extension currently hardcodes port `17373`. Change both sides if you need an
 ## Install from source
 
 ```bash
-git clone https://github.com/imfaisii/deeporax-browser-mcp.git
+git clone https://github.com/imfaisii009/deeporax-browser-mcp.git
 cd deeporax-browser-mcp
 bun install
 bun run build

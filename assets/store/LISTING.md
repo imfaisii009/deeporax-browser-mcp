@@ -61,7 +61,7 @@ Works with Claude Code, Claude Desktop, and any client that speaks the Model
 Context Protocol. Requires Node.js 18 or newer.
 
 Source code and documentation:
-https://github.com/imfaisii/deeporax-browser-mcp
+https://github.com/imfaisii009/deeporax-browser-mcp
 ```
 
 **Category**: `Developer Tools`
@@ -103,4 +103,4 @@ three compliance certifications.
 | `marquee-1400x560.png` | Marquee promo tile (optional) |
 
 Upload the extension zip from the latest release:
-https://github.com/imfaisii/deeporax-browser-mcp/releases/latest/download/extension-dist.zip
+https://github.com/imfaisii009/deeporax-browser-mcp/releases/latest/download/extension-dist.zip
