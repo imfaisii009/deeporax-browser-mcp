@@ -4,6 +4,10 @@ name: Release
 # Push to main: if that version is not on npm yet, it is published, tagged, and
 # a GitHub Release is created. If it is already published, the job is a no-op,
 # so ordinary pushes cost nothing.
+#
+# Auth: npm Trusted Publishing (OIDC), no token. Configured on npmjs.com under
+#   deeporax-browser-mcp → Settings → Trusted Publisher → GitHub Actions
+#   (imfaisii009 / deeporax-browser-mcp / release.yml).
 on:
   push:
     branches: [main]
@@ -35,6 +39,10 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+
+      # Trusted Publishing needs npm 11.5.1 or newer; Node 20 ships npm 10.
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -107,8 +115,6 @@ jobs:
       - name: Publish to npm
         if: steps.check.outputs.publish == 'true'
         working-directory: packages/mcp-server
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
       - name: Tag the release commit
